@@ -42,6 +42,7 @@ input[type=file]{display:none}
   <canvas id="cv"></canvas>
   <p class="s" style="text-align:center;margin-top:8px">Glisse un coin : la loupe apparaît au-dessus de ton doigt.</p>
   <div class="row" style="justify-content:center">
+    <button class="g" id="auto">Auto</button>
     <button class="g" id="bw">Couleur</button>
     <button class="g" id="cancel">Annuler</button>
     <button id="ok">Valider la page</button>
@@ -73,9 +74,51 @@ async function load(file){
   src.getContext('2d').drawImage(bmp,0,0,src.width,src.height);
   const w=src.width,h=src.height,i=.06;
   pts=[{x:w*i,y:h*i},{x:w*(1-i),y:h*i},{x:w*(1-i),y:h*(1-i)},{x:w*i,y:h*(1-i)}];
+  try{const a=detect();if(a)pts=a;}catch(e){}
   mode='color';$('bw').textContent='Couleur';
   $('home').style.display='none';$('list').style.display='none';$('ed').style.display='block';
   fit();draw();
+}
+// Détection auto : sépare le papier du fond (seuil d'Otsu), garde la plus grande zone, prend ses 4 coins extrêmes
+function detect(){
+  const k=300/Math.max(src.width,src.height),w=Math.round(src.width*k),h=Math.round(src.height*k),n=w*h;
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  const g=c.getContext('2d');g.drawImage(src,0,0,w,h);
+  const d=g.getImageData(0,0,w,h).data,gr=new Uint8Array(n),hist=new Array(256).fill(0);
+  let sum=0;
+  for(let i=0;i<n;i++){const v=(.299*d[i*4]+.587*d[i*4+1]+.114*d[i*4+2])|0;gr[i]=v;hist[v]++;sum+=v;}
+  let wB=0,sB=0,mx=-1,th=128;
+  for(let t=0;t<256;t++){
+    wB+=hist[t];if(!wB)continue;const wF=n-wB;if(!wF)break;
+    sB+=t*hist[t];const mB=sB/wB,mF=(sum-sB)/wF,v=wB*wF*(mB-mF)*(mB-mF);
+    if(v>mx){mx=v;th=t;}
+  }
+  const m=new Uint8Array(n);
+  for(let i=0;i<n;i++)m[i]=gr[i]>th?1:0;
+  let bb=0,bn=0;
+  for(let x=0;x<w;x++){bb+=m[x]+m[(h-1)*w+x];bn+=2;}
+  for(let y=0;y<h;y++){bb+=m[y*w]+m[y*w+w-1];bn+=2;}
+  if(bb/bn>.5)for(let i=0;i<n;i++)m[i]=1-m[i];
+  const lab=new Uint8Array(n),st=new Int32Array(n);let best=null;
+  for(let s=0;s<n;s++){
+    if(m[s]!==1||lab[s])continue;
+    let sp=0,cnt=0,mnS=1e9,mxS=-1e9,mnD=1e9,mxD=-1e9;const P=[0,0,0,0];
+    st[sp++]=s;lab[s]=1;
+    while(sp){
+      const p=st[--sp],x=p%w,y=(p/w)|0;cnt++;const S=x+y,D=x-y;
+      if(S<mnS){mnS=S;P[0]=[x,y];}
+      if(D>mxD){mxD=D;P[1]=[x,y];}
+      if(S>mxS){mxS=S;P[2]=[x,y];}
+      if(D<mnD){mnD=D;P[3]=[x,y];}
+      if(x>0&&m[p-1]===1&&!lab[p-1]){lab[p-1]=1;st[sp++]=p-1;}
+      if(x<w-1&&m[p+1]===1&&!lab[p+1]){lab[p+1]=1;st[sp++]=p+1;}
+      if(y>0&&m[p-w]===1&&!lab[p-w]){lab[p-w]=1;st[sp++]=p-w;}
+      if(y<h-1&&m[p+w]===1&&!lab[p+w]){lab[p+w]=1;st[sp++]=p+w;}
+    }
+    if(!best||cnt>best.cnt)best={cnt,P};
+  }
+  if(!best||best.cnt/n<.12)return null;
+  return best.P.map(p=>({x:Math.min(src.width,(p[0]+.5)/k),y:Math.min(src.height,(p[1]+.5)/k)}));
 }
 function fit(){
   const mw=Math.min(window.innerWidth-28,692),mh=window.innerHeight*.62;
@@ -169,6 +212,7 @@ function warp(){
   }
   oc.putImageData(od,0,0);return out;
 }
+$('auto').onclick=()=>{let a=null;try{a=detect();}catch(e){}if(a){pts=a;draw();}};
 $('bw').onclick=()=>{mode=mode==='color'?'bw':'color';$('bw').textContent=mode==='color'?'Couleur':'Noir & blanc';};
 $('cancel').onclick=()=>{src=null;back();};
 $('ok').onclick=()=>{
